@@ -3,11 +3,16 @@ import hashlib
 import shutil
 import time
 import logging
+import sys
+import threading
+import argparse
 from datetime import datetime
 
 source = './source'
 replica = './replica'
-mins = 1
+log_path = './'
+min_s = 1
+running = True
 
 def calc_md5(filepath):
     obj = hashlib.md5()
@@ -17,6 +22,15 @@ def calc_md5(filepath):
 
         return obj.hexdigest()
 
+def key_interrupt():
+    global running
+    global min_s
+    sys.stdin.read(1)
+    print('interrupted by user')
+    running = False
+    min_s = 0.1
+    exit(0)
+
 
 def copy(fpfrom, fpto, meta = 1):
     if file_exists(fpfrom):
@@ -25,6 +39,26 @@ def copy(fpfrom, fpto, meta = 1):
         else:
             shutil.copy(fpfrom, fpto)
 
+def parse_args(args):
+    global source
+    global replica
+    global log_path
+    global min_s
+
+    if file_exists(args.source) and args.source != source:
+        source = args.source
+        print(f'source path updated to {source}')
+    if file_exists(args.replica) and args.replica != replica:
+        replica = args.replica
+        print(f'replica path updated to {replica}')
+    if file_exists(args.log_path) and args.log_path != log_path:
+        log_path = args.log_path
+        print(f'log path updated to {log_path}')
+    if args.interval != min_s:
+        min_s = args.interval
+        print(f'interval updated to {min_s}')
+
+
 def file_exists(filepath):
     return os.path.exists(filepath)
 
@@ -32,7 +66,7 @@ def log(obs):
     logging.info(obs)
     print(f'{datetime.now()} {obs}')
 
-def chkdirs():
+def chk_dirs():
     if not file_exists(source):
         os.makedirs(source)
     if not file_exists(replica):
@@ -81,25 +115,39 @@ class Sync():
             if file_r.spath not in [file.spath for file in self.source_folder.files]:
                 if file_exists(file_r.path):
                     os.remove(file_r.path)
-                    log(f'arquivo {file_r.path} removido')
+                    log(f'file {file_r.path} removed')
         for file in self.source_folder.files:
             if file.spath not in [file_r.spath for file_r in self.replica_folder.files]:
                 copy(file.path, replica)
-                log(f'arquivo {file.path} criado')
+                log(f'file {file.path} created')
                 continue
             if file.spath in [file_r.spath for file_r in self.replica_folder.files] and file.hash not in [file_r.hash for file_r in self.replica_folder.files]:
                 copy(file.path, replica)
-                log(f'arquivo {file.path} replicado')
+                log(f'file {file.path} replicated')
 
 
+args_parser = argparse.ArgumentParser(description='source replica args parser')
+args_parser.add_argument("-s", "--source", type=str, help="source path", default=source)
+args_parser.add_argument("-r", "--replica", type=str, help="replica path", default=replica)
+args_parser.add_argument("-i", "--interval", type=int, help="sync interval in minutes", default=min_s)
+args_parser.add_argument("-l", "--log_path", type=str, help="log file path", default=log_path)
 
-logging.basicConfig(filename='./log.txt', level=logging.INFO, format="%(asctime)s - %(message)s")
+parse_args(args_parser.parse_args())
 
-log(f'iniciado')
+logging.basicConfig(filename=f'{log_path}log.txt', level=logging.INFO, format="%(asctime)s - %(message)s")
 
-while 1 == 1:
-    chkdirs()
+thread = threading.Thread(target=key_interrupt, daemon=True)
+thread.start()
+
+log(f'Started')
+print("Press 'Enter' to interrupt.")
+
+while running:
+    chk_dirs()
     sync = Sync()
     sync.run()
-    time.sleep(60 * mins)
+    for tmr in range(60 * min_s):
+        time.sleep(1)
+        if not running:
+            exit(0)
     print('...', sep='')
