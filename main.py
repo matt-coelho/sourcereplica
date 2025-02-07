@@ -10,34 +10,43 @@ from datetime import datetime
 
 source = './source'
 replica = './replica'
-log_path = './'
+log_path = '.'
 min_s = 1
 running = True
 
 def calc_md5(filepath):
     obj = hashlib.md5()
-    with open(filepath, "rb") as fp:
-        for blc in iter(lambda: fp.read(4096), b""):
-            obj.update(blc)
+    if not os.path.isdir(filepath):
+        with open(filepath, "rb") as fp:
+            for blc in iter(lambda: fp.read(4096), b""):
+                obj.update(blc)
 
-        return obj.hexdigest()
+            return obj.hexdigest()
 
 def key_interrupt():
     global running
-    global min_s
     sys.stdin.read(1)
     print('interrupted by user')
     running = False
-    min_s = 0.1
     exit(0)
 
 
-def copy(fpfrom, fpto, meta = 1):
-    if file_exists(fpfrom):
-        if meta == 1:
-            shutil.copy2(fpfrom, fpto)
+def copy(fp_from, fp_to, meta = True):
+    if file_exists(fp_from):
+        if os.path.isfile(fp_from):
+            if meta:
+                shutil.copy2(fp_from, fp_to)
+            else:
+                shutil.copy(fp_from, fp_to)
         else:
-            shutil.copy(fpfrom, fpto)
+            fp_to = f'{fp_to}/{spath(fp_from)}'
+            shutil.copytree(fp_from, fp_to)
+
+def no_slash_end(string=''):
+    if string.endswith('/') or string.endswith('\\'):
+        return string[:-1]
+    else:
+        return string
 
 def parse_args(args):
     global source
@@ -46,13 +55,13 @@ def parse_args(args):
     global min_s
 
     if file_exists(args.source) and args.source != source:
-        source = args.source
+        source = no_slash_end(args.source)
         print(f'source path updated to {source}')
     if file_exists(args.replica) and args.replica != replica:
-        replica = args.replica
+        replica = no_slash_end(args.replica)
         print(f'replica path updated to {replica}')
     if file_exists(args.log_path) and args.log_path != log_path:
-        log_path = args.log_path
+        log_path = no_slash_end(args.log_path)
         print(f'log path updated to {log_path}')
     if args.interval != min_s:
         min_s = args.interval
@@ -114,16 +123,21 @@ class Sync():
         for file_r in self.replica_folder.files:
             if file_r.spath not in [file.spath for file in self.source_folder.files]:
                 if file_exists(file_r.path):
-                    os.remove(file_r.path)
-                    log(f'file {file_r.path} removed')
+                    try:
+                        os.remove(file_r.path)
+                        log(f'file {file_r.path} removed')
+                    except PermissionError:
+                        log(f"file {file_r.path} is open and can't be removed now")
+                        continue
+
         for file in self.source_folder.files:
             if file.spath not in [file_r.spath for file_r in self.replica_folder.files]:
                 copy(file.path, replica)
-                log(f'file {file.path} created')
+                log(f'file {replica}/{file.spath} created')
                 continue
             if file.spath in [file_r.spath for file_r in self.replica_folder.files] and file.hash not in [file_r.hash for file_r in self.replica_folder.files]:
                 copy(file.path, replica)
-                log(f'file {file.path} replicated')
+                log(f'file {replica}/{file.spath} replicated')
 
 
 args_parser = argparse.ArgumentParser(description='source replica args parser')
@@ -134,7 +148,7 @@ args_parser.add_argument("-l", "--log_path", type=str, help="log file path", def
 
 parse_args(args_parser.parse_args())
 
-logging.basicConfig(filename=f'{log_path}log.txt', level=logging.INFO, format="%(asctime)s - %(message)s")
+logging.basicConfig(filename=f'{log_path}/log.txt', level=logging.INFO, format="%(asctime)s - %(message)s")
 
 thread = threading.Thread(target=key_interrupt, daemon=True)
 thread.start()
@@ -150,4 +164,4 @@ while running:
         time.sleep(1)
         if not running:
             exit(0)
-    print('...', sep='')
+    print('...', end='')
