@@ -1,27 +1,30 @@
 import os
 import hashlib
 import shutil
-from argparse import Namespace
-
 import time
 import logging
 import sys
 import threading
 import argparse
+
 from datetime import datetime
+from argparse import Namespace
 
 
 class Parameters:
-    source = './source'
-    replica = './replica'
-    log_path = '.'
-    min_s = 1
-    running = True
+    source: str = './source'
+    replica: str = './replica'
+    log_path: str = '.'
+    min_s: int = 1
+    running: bool = True
+
+    def __new__(cls):
+        return cls
 
 
 def calc_md5(filepath: str):
     obj = hashlib.md5()
-    if not os.path.isdir(filepath):
+    if is_file(filepath):
         with open(filepath, "rb") as fp:
             for blc in iter(lambda: fp.read(4096), b""):
                 obj.update(blc)
@@ -34,19 +37,6 @@ def key_interrupt():
     log('interrupted by user')
     Parameters.running = False
     exit(0)
-
-
-def copy(fp_from: str, fp_to: str, meta=True):
-    if file_exists(fp_from):
-        fp_to = f'{fp_to}/{spath(fp_from)}'
-        if os.path.isfile(fp_from):
-            if meta:
-                shutil.copy2(fp_from, fp_to)
-            else:
-                shutil.copy(fp_from, fp_to)
-        else:
-            fp_to = f'{fp_to}/{spath(fp_from)}'
-            shutil.copytree(fp_from, f'{fp_to}/{(fp_from.split(f"{Parameters.source}")[1])}')
 
 
 def no_slash_end(string: str = ''):
@@ -108,8 +98,9 @@ def log(obs: str):
 
 def mk_dir(filepath: str):
     if not is_file(filepath):
-        os.makedirs(filepath)
+        os.makedirs(filepath, exist_ok=True)
         log(f'directory {filepath} created')
+
 
 """if not exists, creates the default source and replica paths"""
 def chk_dirs():
@@ -119,7 +110,7 @@ def chk_dirs():
         mk_dir(Parameters.replica)
 
 
-""""returns the name of the file or folder"""
+"""returns the name of the file or folder"""
 def spath(path: str):
     if path.find(Parameters.source) >= 0:
         return path.split(f'{Parameters.source}/')[1]
@@ -134,6 +125,16 @@ class Dir:
         self.path = filepath
         self.spath = spath(filepath)
         self.hash = calc_md5(filepath)
+
+"""copies a file from source to replica"""
+def copy(file: Dir, meta=True):
+    if file_exists(file.path):
+        fp_to = f'{Parameters.replica}/{file.spath}'
+        if meta:
+            shutil.copy2(file.path, fp_to)
+        else:
+            shutil.copy(file.path, fp_to)
+        log(f'file {fp_to} copied')
 
 
 """navigates the directory tree creating the list  of files"""
@@ -187,14 +188,12 @@ class Sync:
 
         for file in self.source_folder.files:
             if file.spath not in [file_r.spath for file_r in self.replica_folder.files]:
-                copy(file.path, Parameters.replica)
-                log(f'file {Parameters.replica}/{file.spath} created')
+                copy(file)
                 continue
             if file.spath in [file_r.spath for file_r in self.replica_folder.files] and file.hash not in [file_r.hash
                                                                                                           for file_r in
                                                                                                           self.replica_folder.files]:
-                copy(file.path, Parameters.replica)
-                log(f'file {Parameters.replica}/{file.spath} replicated')
+                copy(file)
 
 
 logging.basicConfig(filename=f'{Parameters.log_path}/log.txt', level=logging.INFO, format="%(asctime)s - %(message)s")
@@ -210,11 +209,12 @@ parse_args(args_parser.parse_args())
 thread = threading.Thread(target=key_interrupt, daemon=True)
 thread.start()
 
+chk_dirs()
+
 log(f'Started')
 print("Press 'Enter' to interrupt.")
 
 while Parameters.running:
-    chk_dirs()
     sync = Sync()
     sync.run()
     for tmr in range(60 * Parameters.min_s):
